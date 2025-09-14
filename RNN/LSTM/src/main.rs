@@ -3,6 +3,7 @@ use csv::ReaderBuilder;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use std::time::Instant;
 use rand::Rng;
 
 // Simple utilities
@@ -200,6 +201,8 @@ fn save_predictions(path: &str, timestamps: &[String], y_true: &Array1<f64>, y_p
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let start_total = Instant::now();
+    
     println!("=== LSTM (output-only training) for BTC hourly regression ===");
 
     // params
@@ -209,13 +212,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let epochs = 1000;
 
     // 1) load series
+    let start_load = Instant::now();
     let series = load_series("btc_close_hourly.csv")?;
+    let load_duration = start_load.elapsed();
+    println!("Data loading time: {:.2?}", load_duration);
+    
     if series.len() <= seq_len + 1 {
         return Err("Series too short".into());
     }
 
     // build dataset
+    let start_dataset = Instant::now();
     let (X_all, y_all) = make_dataset(&series, seq_len);
+    let dataset_duration = start_dataset.elapsed();
+    println!("Dataset preparation time: {:.2?}", dataset_duration);
 
     // simple train/test split: last 10% as test
     let n_samples = X_all.dim().0;
@@ -231,22 +241,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Samples: total={}, train={}, test={}", n_samples, n_train, n_test);
 
     // 2) create model
+    let start_model = Instant::now();
     let mut model = LSTM::new(1, hidden_size, lr);
+    let model_init_duration = start_model.elapsed();
+    println!("Model initialization time: {:.2?}", model_init_duration);
 
     // 3) train (output-only)
+    let start_train = Instant::now();
     model.fit_output_only(&X_train, &y_train, epochs);
+    let train_duration = start_train.elapsed();
+    println!("Training time: {:.2?}", train_duration);
 
     // 4) evaluate
+    let start_eval = Instant::now();
     let y_pred_train = model.predict(&X_train);
     let y_pred_test = model.predict(&X_test);
+    let eval_duration = start_eval.elapsed();
+    println!("Evaluation time: {:.2?}", eval_duration);
 
     println!("Train MSE: {:.6}", mse_loss(&y_pred_train, &y_train));
     println!("Test  MSE: {:.6}", mse_loss(&y_pred_test, &y_test));
 
     // 5) save test predictions
+    let start_save = Instant::now();
     let timestamps: Vec<String> = (0..y_test.len()).map(|i| format!("idx_{}", i)).collect();
     save_predictions("predictions.csv", &timestamps, &y_test, &y_pred_test)?;
+    let save_duration = start_save.elapsed();
+    println!("Saving time: {:.2?}", save_duration);
     println!("Predictions saved to predictions.csv");
+
+    let total_duration = start_total.elapsed();
+    println!("\n=== Timing Summary ===");
+    println!("Data loading:        {:.2?}", load_duration);
+    println!("Dataset preparation: {:.2?}", dataset_duration);
+    println!("Model initialization:{:.2?}", model_init_duration);
+    println!("Training:            {:.2?}", train_duration);
+    println!("Evaluation:          {:.2?}", eval_duration);
+    println!("Saving:              {:.2?}", save_duration);
+    println!("Total execution:     {:.2?}", total_duration);
 
     Ok(())
 }

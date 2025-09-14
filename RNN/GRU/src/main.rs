@@ -3,6 +3,7 @@ use csv::ReaderBuilder;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use std::time::Instant;
 use rand::Rng;
 
 // ===== Utilities =====
@@ -175,6 +176,8 @@ fn save_predictions(path: &str, timestamps: &[String], y_true: &Array1<f64>, y_p
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let start_time = Instant::now();
+    
     println!("=== GRU (output-only training) for BTC hourly regression ===");
 
     let seq_len = 24;
@@ -182,11 +185,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let lr = 0.001;
     let epochs = 1000;
 
+    // Data loading
+    let data_load_start = Instant::now();
     let series = load_series("btc_close_hourly.csv")?;
     if series.len() <= seq_len + 1 {
         return Err("Series too short".into());
     }
+    let data_load_time = data_load_start.elapsed();
+    println!("Data loading time: {:.2}ms", data_load_time.as_millis());
 
+    // Dataset preparation
+    let dataset_prep_start = Instant::now();
     let (X_all, y_all) = make_dataset(&series, seq_len);
 
     let n_samples = X_all.dim().0;
@@ -198,21 +207,51 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let X_test = X_all.slice(s![n_train.., .., ..]).to_owned();
     let y_test = y_all.slice(s![n_train..]).to_owned();
+    let dataset_prep_time = dataset_prep_start.elapsed();
+    println!("Dataset preparation time: {:.2}ms", dataset_prep_time.as_millis());
 
     println!("Samples: total={}, train={}, test={}", n_samples, n_train, n_test);
 
+    // Model initialization
+    let model_init_start = Instant::now();
     let mut model = GRU::new(1, hidden_size, lr);
-    model.fit_output_only(&X_train, &y_train, epochs);
+    let model_init_time = model_init_start.elapsed();
+    println!("Model initialization time: {:.2}ms", model_init_time.as_millis());
 
+    // Training
+    let training_start = Instant::now();
+    model.fit_output_only(&X_train, &y_train, epochs);
+    let training_time = training_start.elapsed();
+    println!("Training time: {:.2}s", training_time.as_secs_f64());
+
+    // Prediction
+    let prediction_start = Instant::now();
     let y_pred_train = model.predict(&X_train);
     let y_pred_test = model.predict(&X_test);
+    let prediction_time = prediction_start.elapsed();
+    println!("Prediction time: {:.2}ms", prediction_time.as_millis());
 
     println!("Train MSE: {:.6}", mse_loss(&y_pred_train, &y_train));
     println!("Test  MSE: {:.6}", mse_loss(&y_pred_test, &y_test));
 
+    // Save predictions
+    let save_start = Instant::now();
     let timestamps: Vec<String> = (0..y_test.len()).map(|i| format!("idx_{}", i)).collect();
     save_predictions("predictions.csv", &timestamps, &y_test, &y_pred_test)?;
+    let save_time = save_start.elapsed();
+    println!("Save predictions time: {:.2}ms", save_time.as_millis());
+    
     println!("Predictions saved to predictions.csv");
+
+    let total_time = start_time.elapsed();
+    println!("\n=== Execution Time Summary ===");
+    println!("Data loading:        {:.2}ms", data_load_time.as_millis());
+    println!("Dataset preparation: {:.2}ms", dataset_prep_time.as_millis());
+    println!("Model initialization: {:.2}ms", model_init_time.as_millis());
+    println!("Training:            {:.2}s", training_time.as_secs_f64());
+    println!("Prediction:          {:.2}ms", prediction_time.as_millis());
+    println!("Save predictions:    {:.2}ms", save_time.as_millis());
+    println!("Total execution:     {:.2}s", total_time.as_secs_f64());
 
     Ok(())
 }
